@@ -8,7 +8,7 @@ import doobie.free.implicits._
 import doobie.refined.implicits._
 import doobie.util.log.LogHandler
 import org.ergoplatform.explorer.db.DoobieLogHandler
-import org.ergoplatform.explorer.{BoxId, HexString, TxId}
+import org.ergoplatform.explorer.{BoxId, ErgoTree, HexString, TxId}
 import org.ergoplatform.explorer.db.algebra.LiftConnectionIO
 import org.ergoplatform.explorer.db.syntax.liftConnectionIO._
 import org.ergoplatform.explorer.db.doobieInstances._
@@ -33,7 +33,11 @@ trait UOutputRepo[D[_], S[_[_], _]] {
 
   /** Get all outputs containing in unconfirmed transactions.
     */
-  def getAll(offset: Int, limit: Int): S[D, ExtendedUOutput]
+  def streamAll(offset: Int, limit: Int): S[D, ExtendedUOutput]
+
+  /** Get all unspent outputs containing in unconfirmed transactions.
+    */
+  def streamAllUnspent(offset: Int, limit: Int): S[D, UOutput]
 
   /** Get all unconfirmed outputs related to transaction with a given `txId`.
     */
@@ -42,6 +46,10 @@ trait UOutputRepo[D[_], S[_[_], _]] {
   /** Get all unconfirmed outputs related to transaction with a given list of `txId`.
     */
   def getAllByTxIds(txIds: NonEmptyList[TxId]): D[List[ExtendedUOutput]]
+
+  /** Get all unconfirmed outputs related to an address.
+    */
+  def streamAllRelatedToErgoTree(ergoTree: ErgoTree): Stream[D, UOutput]
 
   /** Get all unconfirmed outputs belonging to the given `ergoTree`.
     */
@@ -63,8 +71,7 @@ object UOutputRepo {
       new Live[D]
     }
 
-  final private class Live[D[_]: LiftConnectionIO](implicit lh: LogHandler)
-    extends UOutputRepo[D, Stream] {
+  final private class Live[D[_]: LiftConnectionIO](implicit lh: LogHandler) extends UOutputRepo[D, Stream] {
 
     import org.ergoplatform.explorer.db.queries.{UOutputQuerySet => QS}
 
@@ -77,8 +84,16 @@ object UOutputRepo {
     def getByBoxId(boxId: BoxId): D[Option[ExtendedUOutput]] =
       QS.get(boxId).option.liftConnectionIO
 
-    def getAll(offset: Int, limit: Int): Stream[D, ExtendedUOutput] =
+    def streamAll(offset: Int, limit: Int): Stream[D, ExtendedUOutput] =
       QS.getAll(offset, limit).stream.translate(LiftConnectionIO[D].liftConnectionIOK)
+
+    def streamAllRelatedToErgoTree(ergoTree: ErgoTree): Stream[D, UOutput] =
+      QS.getAllRelatedToErgoTree(ergoTree.value)
+        .stream
+        .translate(LiftConnectionIO[D].liftConnectionIOK)
+
+    def streamAllUnspent(offset: Int, limit: Int): Stream[D, UOutput] =
+      QS.getAllUnspent(offset, limit).stream.translate(LiftConnectionIO[D].liftConnectionIOK)
 
     def getAllByTxId(txId: TxId): D[List[ExtendedUOutput]] =
       QS.getAllByTxId(txId).to[List].liftConnectionIO

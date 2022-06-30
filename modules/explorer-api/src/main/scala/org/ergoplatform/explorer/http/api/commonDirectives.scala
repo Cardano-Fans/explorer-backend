@@ -5,7 +5,7 @@ import cats.instances.option._
 import cats.syntax.flatMap._
 import cats.syntax.option._
 import org.ergoplatform.explorer.http.api.models.Sorting.SortOrder
-import org.ergoplatform.explorer.http.api.models.{HeightRange, Paging, Sorting}
+import org.ergoplatform.explorer.http.api.models.{HeightRange, InclusionHeightRange, Paging, Sorting}
 import sttp.tapir.{query, EndpointInput, ValidationError, Validator}
 
 import java.util.concurrent.TimeUnit
@@ -23,6 +23,16 @@ object commonDirectives {
       .map { input =>
         Paging(input._1.getOrElse(0), input._2.getOrElse(20))
       } { case Paging(offset, limit) => offset.some -> limit.some }
+
+  def inclusionHeight: EndpointInput[Option[InclusionHeightRange]] = {
+    import tofu.syntax.monadic._
+    (query[Option[Int]]("fromHeight").validateOption(Validator.min(0)) and
+    query[Option[Int]]("toHeight").validateOption(Validator.min(1)))
+      .map(in => (in._1, in._2).mapN(InclusionHeightRange)) {
+        case Some(inH) => inH.fromHeight.some -> inH.toHeight.some
+        case None      => none                -> none
+      }
+  }
 
   val confirmations: EndpointInput[Int] =
     query[Option[Int]]("minConfirmations").map(_.getOrElse(0))(_.some)
@@ -71,6 +81,11 @@ object commonDirectives {
 
   def limit(maxEntities: Int): EndpointInput.Query[Int] =
     query[Int]("limit").validate(Validator.max(maxEntities))
+
+  def minGlobalIndex: EndpointInput.Query[Long] =
+    query[Long]("minGix")
+      .validate(Validator.min(0L))
+      .description("Min global index (in blockchain) of an on-chain entity")
 
   def concise: EndpointInput.Query[Boolean] =
     query[Boolean]("concise")

@@ -1,15 +1,17 @@
 package org.ergoplatform.explorer.db.repositories
 
+import cats.data.NonEmptyList
 import cats.effect.Sync
 import cats.syntax.functor._
 import doobie.free.implicits._
 import doobie.util.log.LogHandler
+import eu.timepit.refined.refineMV
 import org.ergoplatform.explorer.BlockId
-import org.ergoplatform.explorer.constraints.OrderingString
+import org.ergoplatform.explorer.constraints.{OrderingSpec, OrderingString}
 import org.ergoplatform.explorer.db.DoobieLogHandler
 import org.ergoplatform.explorer.db.algebra.LiftConnectionIO
 import org.ergoplatform.explorer.db.models.BlockStats
-import org.ergoplatform.explorer.db.models.aggregates.{ExtendedBlockInfo, MinerStats, TimePoint}
+import org.ergoplatform.explorer.db.models.aggregates.{BlockSize, ExtendedBlockInfo, MinerStats, TimePoint}
 import org.ergoplatform.explorer.db.syntax.liftConnectionIO._
 
 /** [[BlockStats]] data access operations.
@@ -33,6 +35,10 @@ trait BlockInfoRepo[D[_]] {
     sortBy: String
   ): D[List[ExtendedBlockInfo]]
 
+  /** Stream blocks.
+    */
+  def stream(minGix: Long, limit: Int): fs2.Stream[D, ExtendedBlockInfo]
+
   /** Get all blocks appeared in the main chain after the given timestamp `ts`.
     */
   def getManySince(ts: Long): D[List[BlockStats]]
@@ -44,6 +50,8 @@ trait BlockInfoRepo[D[_]] {
   /** Get size in bytes of the block with the given `id`.
     */
   def getBlockSize(id: BlockId): D[Option[Int]]
+
+  def getBlockSizes(blockIds: NonEmptyList[BlockId]): D[List[BlockSize]]
 
   def getLastStats: D[Option[BlockStats]]
 
@@ -109,6 +117,11 @@ object BlockInfoRepo {
     ): D[List[ExtendedBlockInfo]] =
       QS.getManyExtendedMain(offset, limit, ordering, orderBy).to[List].liftConnectionIO
 
+    def stream(minGix: Long, limit: Int): fs2.Stream[D, ExtendedBlockInfo] =
+      QS.getManyExtendedMain(minGix, limit, refineMV[OrderingSpec]("asc"), "height")
+        .stream
+        .translate(LiftConnectionIO[D].liftConnectionIOK)
+
     def getManySince(ts: Long): D[List[BlockStats]] =
       QS.getManySince(ts).to[List].liftConnectionIO
 
@@ -117,6 +130,9 @@ object BlockInfoRepo {
 
     def getBlockSize(id: BlockId): D[Option[Int]] =
       QS.getBlockSize(id).option.liftConnectionIO
+
+    def getBlockSizes(blockIds: NonEmptyList[BlockId]): D[List[BlockSize]] =
+      QS.getBlocksSize(blockIds).to[List].liftConnectionIO
 
     def getLastStats: D[Option[BlockStats]] =
       QS.getLastStats.option.liftConnectionIO

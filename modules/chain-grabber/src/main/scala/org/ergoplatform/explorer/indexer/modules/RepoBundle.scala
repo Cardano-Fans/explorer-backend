@@ -1,5 +1,6 @@
 package org.ergoplatform.explorer.indexer.modules
 
+import cats.Monad
 import cats.effect.Sync
 import fs2.Stream
 import org.ergoplatform.explorer.db.algebra.LiftConnectionIO
@@ -7,7 +8,7 @@ import org.ergoplatform.explorer.db.repositories._
 import tofu.syntax.monadic._
 
 final case class RepoBundle[D[_]](
-  headers: HeaderRepo[D],
+  headers: HeaderRepo[D, Stream],
   blocksInfo: BlockInfoRepo[D],
   blockExtensions: BlockExtensionRepo[D],
   adProofs: AdProofRepo[D],
@@ -24,7 +25,7 @@ final case class RepoBundle[D[_]](
 
 object RepoBundle {
 
-  def apply[F[_]: Sync, D[_]: LiftConnectionIO]: F[RepoBundle[D]] =
+  def apply[F[_]: Sync, D[_]: LiftConnectionIO: Monad]: F[RepoBundle[D]] =
     (
       HeaderRepo[F, D],
       BlockInfoRepo[F, D],

@@ -11,18 +11,20 @@ import mouse.anyf._
 import org.ergoplatform.explorer.Err.RequestProcessingErr.{BadRequest, FeatureNotSupported}
 import org.ergoplatform.explorer.db.Trans
 import org.ergoplatform.explorer.db.algebra.LiftConnectionIO
-import org.ergoplatform.explorer.db.models.UTransaction
+import org.ergoplatform.explorer.db.models.{Output, UOutput, UTransaction}
 import org.ergoplatform.explorer.db.repositories.bundles.UtxRepoBundle
-import org.ergoplatform.explorer.http.api.models.{Items, Paging}
+import org.ergoplatform.explorer.http.api.models.{HeightRange, Items, Paging}
 import org.ergoplatform.explorer.http.api.streaming.CompileStream
 import org.ergoplatform.explorer.http.api.v0.models.TxIdResponse
-import org.ergoplatform.explorer.http.api.v1.models.UTransactionInfo
+import org.ergoplatform.explorer.http.api.v1.models.{OutputInfo, UOutputInfo, UTransactionInfo}
+import org.ergoplatform.explorer.http.api.v1.shared.MempoolProps
 import org.ergoplatform.explorer.protocol.TxValidation
 import org.ergoplatform.explorer.protocol.TxValidation.PartialSemanticValidation
 import org.ergoplatform.explorer.protocol.sigma.addressToErgoTreeNewtype
 import org.ergoplatform.explorer.settings.{ServiceSettings, UtxCacheSettings}
 import org.ergoplatform.explorer.{Address, BoxId, ErgoTree, TxId}
 import org.ergoplatform.{ErgoAddressEncoder, ErgoLikeTransaction}
+import org.ergoplatform.explorer.syntax.stream._
 import tofu.Throws
 import tofu.syntax.monadic._
 import tofu.syntax.raise._
@@ -41,6 +43,8 @@ trait Mempool[F[_]] {
   ): F[Items[UTransactionInfo]]
 
   def submit(tx: ErgoLikeTransaction): F[TxIdResponse]
+
+  def streamUnspentOutputs: Stream[F, UOutputInfo]
 }
 
 object Mempool {
@@ -48,17 +52,19 @@ object Mempool {
   def apply[F[_]: Concurrent, D[_]: Monad: CompileStream: LiftConnectionIO](
     settings: ServiceSettings,
     utxCacheSettings: UtxCacheSettings,
-    redis: Option[RedisCommands[F, String, String]]
+    redis: Option[RedisCommands[F, String, String]],
+    memprops: MempoolProps[F, D]
   )(trans: D Trans F)(implicit e: ErgoAddressEncoder): F[Mempool[F]] = {
     val validation = PartialSemanticValidation
     UtxRepoBundle[F, D](utxCacheSettings, redis)
-      .map(bundle => new Live(settings, bundle, validation)(trans))
+      .map(bundle => new Live(settings, bundle, validation, memprops)(trans))
   }
 
   final class Live[F[_]: Monad: Throws, D[_]: Monad: CompileStream](
     settings: ServiceSettings,
     repo: UtxRepoBundle[F, D, Stream],
-    semanticValidation: TxValidation
+    semanticValidation: TxValidation,
+    memprops: MempoolProps[F, D]
   )(trans: D Trans F)(implicit e: ErgoAddressEncoder)
     extends Mempool[F] {
 
@@ -71,7 +77,7 @@ object Mempool {
           txs
             .streamRelatedToErgoTree(ergoTree, paging.offset, paging.limit)
             .chunkN(settings.chunkSize)
-            .through(makeTransaction)
+            .through(memprops.mkTransaction)
             .to[List]
             .map(Items(_, total))
         }
@@ -110,22 +116,11 @@ object Mempool {
         case None => FeatureNotSupported("Tx broadcasting").raise
       }
 
-    private def makeTransaction: Pipe[D, Chunk[UTransaction], UTransactionInfo] =
-      for {
-        chunk        <- _
-        txIds        <- Stream.emit(chunk.map(_.id).toNel).unNone
-        ins          <- Stream.eval(inputs.getAllByTxIds(txIds))
-        inIds        <- Stream.emit(ins.map(_.input.boxId).toNel).unNone
-        inAssets     <- Stream.eval(assets.getAllByBoxIds(inIds))
-        confInAssets <- Stream.eval(confirmedAssets.getAllByBoxIds(inIds))
-        dataIns      <- Stream.eval(dataInputs.getAllByTxIds(txIds))
-        outs         <- Stream.eval(outputs.getAllByTxIds(txIds))
-        outIds       <- Stream.emit(outs.map(_.boxId).toNel).unNone
-        outAssets    <- Stream.eval(assets.getAllByBoxIds(outIds))
-        txInfo <-
-          Stream.emits(
-            UTransactionInfo.unFlattenBatch(chunk.toList, ins, dataIns, outs, inAssets, confInAssets, outAssets)
-          )
-      } yield txInfo
+    def streamUnspentOutputs: Stream[F, UOutputInfo] =
+      outputs
+        .streamAllUnspent(0, Int.MaxValue)
+        .chunkN(settings.chunkSize)
+        .through(memprops.mkUnspentOutputInfo)
+        .thrushK(trans.xas)
   }
 }

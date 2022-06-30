@@ -5,7 +5,7 @@ import org.ergoplatform.explorer.http.api.ApiErr
 import org.ergoplatform.explorer.http.api.commonDirectives._
 import org.ergoplatform.explorer.http.api.models.Sorting.SortOrder
 import org.ergoplatform.explorer.http.api.models.{HeightRange, Items, Paging}
-import org.ergoplatform.explorer.http.api.v1.models.{BoxAssetsQuery, BoxQuery, OutputInfo}
+import org.ergoplatform.explorer.http.api.v1.models.{BoxAssetsQuery, BoxQuery, MOutputInfo, OutputInfo}
 import org.ergoplatform.explorer.settings.RequestsSettings
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.tapir._
@@ -51,7 +51,7 @@ final class BoxesEndpointDefs[F[_]](settings: RequestsSettings) {
   def streamUnspentOutputsByGixDef: Endpoint[(Long, Int), ApiErr, fs2.Stream[F, Byte], Fs2Streams[F]] =
     baseEndpointDef.get
       .in(PathPrefix / "unspent" / "byGlobalIndex" / "stream")
-      .in(query[Long]("minGix").validate(Validator.min(0L)).description("Min global index (in blockchain) of a box"))
+      .in(minGlobalIndex)
       .in(limit(settings.maxEntitiesPerRequest))
       .out(streamBody(Fs2Streams[F])(Schema.derived[List[OutputInfo]], CodecFormat.Json(), None))
       .description("Get a stream of unspent outputs ordered by global index")
@@ -59,7 +59,7 @@ final class BoxesEndpointDefs[F[_]](settings: RequestsSettings) {
   def streamOutputsByGixDef: Endpoint[(Long, Int), ApiErr, fs2.Stream[F, Byte], Fs2Streams[F]] =
     baseEndpointDef.get
       .in(PathPrefix / "byGlobalIndex" / "stream")
-      .in(query[Long]("minGix").validate(Validator.min(0L)).description("Min global index (in blockchain) of a box"))
+      .in(minGlobalIndex)
       .in(limit(settings.maxEntitiesPerRequest))
       .out(streamBody(Fs2Streams[F])(Schema.derived[List[OutputInfo]], CodecFormat.Json(), None))
       .description("Get a stream of outputs ordered by global index")
@@ -128,6 +128,13 @@ final class BoxesEndpointDefs[F[_]](settings: RequestsSettings) {
       .in(PathPrefix / "byAddress" / path[Address])
       .in(paging(settings.maxEntitiesPerRequest))
       .out(jsonBody[Items[OutputInfo]])
+
+  def `getUnspent&UnconfirmedOutputsMergedByAddressDef`
+    : Endpoint[(Address, SortOrder), ApiErr, List[MOutputInfo], Any] =
+    baseEndpointDef.get
+      .in(PathPrefix / "unspent" / "unconfirmed" / "byAddress" / path[Address])
+      .in(ordering)
+      .out(jsonBody[List[MOutputInfo]])
 
   def getUnspentOutputsByAddressDef: Endpoint[(Address, Paging, SortOrder), ApiErr, Items[OutputInfo], Any] =
     baseEndpointDef.get
